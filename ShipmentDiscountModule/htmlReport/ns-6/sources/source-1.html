@@ -1,0 +1,212 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > ShipmentCalculator</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/idea.min.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.min.js"></script>
+  <script type="text/javascript" src="../../js/highlightjs-line-numbers.min.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">pricing</a>
+</div>
+
+<h1>Coverage Summary for Class: ShipmentCalculator (pricing)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">ShipmentCalculator</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (6/6)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    95%
+  </span>
+  <span class="absValue">
+    (38/40)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<code class="sourceCode" id="sourceCode">&nbsp;package pricing;
+&nbsp;
+&nbsp;import config.Constants;
+&nbsp;import enums.PackageSize;
+&nbsp;import mappers.TransactionMapper;
+&nbsp;import model.PricedTransaction;
+&nbsp;import model.PricingRequest;
+&nbsp;import model.Transaction;
+&nbsp;import pricing.strategies.DiscountStrategy;
+&nbsp;import shipment.ShipmentSupplier;
+&nbsp;
+&nbsp;import java.time.ZonedDateTime;
+&nbsp;import java.util.ArrayList;
+&nbsp;import java.util.List;
+&nbsp;
+&nbsp;/*
+&nbsp;an object where raw data is mapped to concrete objects, core business logic orchestrator (ShipmentCalculatorContext)
+&nbsp;is initiated and where final result is printed to console
+&nbsp;
+&nbsp;the main idea behind design is strategy design/ dependency injection patterns
+&nbsp;this decouples code for easy modification or addition of pricing rules
+&nbsp; */
+&nbsp;
+&nbsp;public final class ShipmentCalculator {
+&nbsp;    private final List&lt;DiscountStrategy&gt; discountStrategyList;
+&nbsp;    private final PricingRequest request;
+&nbsp;    private final List&lt;Transaction&gt; transactions;
+&nbsp;
+<b class="fc">&nbsp;    public ShipmentCalculator(final PricingRequest request, final DiscountStrategy... strategies) {</b>
+<b class="fc">&nbsp;        this.request = request;</b>
+<b class="fc">&nbsp;        this.transactions = new ArrayList&lt;&gt;();</b>
+<b class="fc">&nbsp;        this.discountStrategyList = new ArrayList&lt;&gt;(List.of(strategies));</b>
+&nbsp;    }
+&nbsp;
+&nbsp;    /*
+&nbsp;    discount strategies are transformed to list, and the logic inside every strategy is executed
+&nbsp;    ShipmentCalculatorContext evaluates that logic of the strategy would not violate logical integrity of the transaction
+&nbsp;    and of other strategies:
+&nbsp;      - discount must not be bigger than price,
+&nbsp;      - discount must not be bigger that discount pool,
+&nbsp;      - total sum of discounts must not be bigger than discount pool
+&nbsp;    context acts in the very end, and only then transaction state is changed
+&nbsp;     */
+&nbsp;    public List&lt;PricedTransaction&gt; calculateShipment() {
+<b class="fc">&nbsp;        mapTransactions(this.request);</b>
+<b class="fc">&nbsp;        final ShipmentCalculatorContext context = new ShipmentCalculatorContext(request.getCountryProfile());</b>
+<b class="fc">&nbsp;        context.setMonthDiscountCap(Constants.DISCOUNT_LIMIT_10);</b>
+&nbsp;
+<b class="fc">&nbsp;        final List&lt;PricedTransaction&gt; pricedTransactions = new ArrayList&lt;&gt;();</b>
+&nbsp;
+<b class="fc">&nbsp;        for (Transaction transaction : transactions) {</b>
+&nbsp;            try {
+<b class="fc">&nbsp;                context.evaluateMonth(transaction.getDate().getMonthValue());</b>
+&nbsp;
+<b class="fc">&nbsp;                double basePrice = getTransactionsBasePrice(transaction);</b>
+<b class="fc">&nbsp;                final PricedTransaction pricedTransaction = new PricedTransaction(transaction, basePrice);</b>
+<b class="fc">&nbsp;                context.setPricedTransaction(pricedTransaction);</b>
+&nbsp;
+<b class="fc">&nbsp;                for (DiscountStrategy strategy : discountStrategyList)</b>
+<b class="fc">&nbsp;                    strategy.apply(context);</b>
+&nbsp;
+<b class="fc">&nbsp;                context.applyFeasibleDiscountToTransaction();</b>
+<b class="fc">&nbsp;                context.resetFeasibleDiscount();</b>
+<b class="fc">&nbsp;                pricedTransactions.add(pricedTransaction);</b>
+<b class="nc">&nbsp;            } catch (UnsupportedOperationException e) {</b>
+<b class="nc">&nbsp;                System.err.println(e.getMessage());</b>
+<b class="fc">&nbsp;            }</b>
+<b class="fc">&nbsp;        }</b>
+&nbsp;
+<b class="fc">&nbsp;        printPriceTransactions(pricedTransactions);</b>
+<b class="fc">&nbsp;        return pricedTransactions;</b>
+&nbsp;    }
+&nbsp;
+&nbsp;    private void printPriceTransactions(final List&lt;PricedTransaction&gt; pricedTransactions) {
+<b class="fc">&nbsp;        for (PricedTransaction pricedTransaction : pricedTransactions)</b>
+<b class="fc">&nbsp;            System.out.println(pricedTransaction);</b>
+&nbsp;    }
+&nbsp;
+&nbsp;    /*
+&nbsp;    since there are countless reasons for string to cause an exception, whole mapping operation is in try/ catch clause
+&nbsp;    without trying to pinpoint the cause
+&nbsp;    exception handler creates dummy transaction, last constructor argument flags transaction as not serviceable, and
+&nbsp;    this attribute is later the first one to be tested before doing operations with a transaction/ priced transaction
+&nbsp;     */
+&nbsp;    private void mapTransactions(PricingRequest request) {
+<b class="fc">&nbsp;        for (String s : request.getTransactions()) {</b>
+&nbsp;            try {
+<b class="fc">&nbsp;                Transaction transaction = TransactionMapper.transactionFromString(s);</b>
+<b class="fc">&nbsp;                transactions.add(transaction);</b>
+<b class="fc">&nbsp;            } catch (Exception e) {</b>
+<b class="fc">&nbsp;                Transaction transaction = insertInvalidTransaction();</b>
+<b class="fc">&nbsp;                transaction.setNonServiceableString(s);</b>
+<b class="fc">&nbsp;                transactions.add(transaction);</b>
+<b class="fc">&nbsp;            }</b>
+<b class="fc">&nbsp;        }</b>
+&nbsp;    }
+&nbsp;
+&nbsp;    private Transaction insertInvalidTransaction() {
+<b class="fc">&nbsp;        return new Transaction(ZonedDateTime.now(), PackageSize.LARGE, &quot;-&quot;, false);</b>
+&nbsp;    }
+&nbsp;
+&nbsp;    private double getTransactionsBasePrice(final Transaction transaction) {
+<b class="fc">&nbsp;        for (ShipmentSupplier supplier : this.request.getCountryProfile().getShipmentSuppliers())</b>
+<b class="fc">&nbsp;            if (supplier.getAbbreviation().equals(transaction.getSupplierAbbreviation()))</b>
+<b class="fc">&nbsp;                return supplier.getPriceList().get(transaction.getSize());</b>
+&nbsp;
+<b class="fc">&nbsp;        return 0.0;</b>
+&nbsp;    }
+&nbsp;}
+</code>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+      hljs.highlightAll()
+      hljs.initLineNumbersOnLoad();
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2025-07-17 10:17</div>
+</div>
+</body>
+</html>
